@@ -1,0 +1,245 @@
+---
+title: "seminar"
+author: "Caleb vonMaydell"
+date: "2024-03-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+pkg_list <- c("dplyr", "caret", "boot","calibrate", "ISLR")
+# Install packages if needed
+for (pkg in pkg_list)
+{
+# Try loading the library.
+if ( ! library(pkg, logical.return=TRUE, character.only=TRUE) )
+{
+# If the library cannot be loaded, install it; then load.
+install.packages(pkg)
+library(pkg, character.only=TRUE)
+}
+}
+
+```
+
+```{r mains, warning = FALSE}
+library(readxl)
+final_df <- read_excel("C:/Users/Caleb/Downloads/final_df.xlsx")
+climate<-final_df
+
+city_dfs <- split(climate, climate$City)  #splits the data into each city
+km_df <- city_dfs[["Kamloops_Airport"]]
+cg_df <- city_dfs[["Calgary"]]
+pl_df <- city_dfs[["Portland"]]
+oy_df <- city_dfs[["Osoyoos"]]
+PG_df <- city_dfs[["Prince_George"]]
+
+
+# Merge data frames based on the 'Date' column
+combined_df <- merge(km_df, cg_df, by = "Date", all = TRUE)
+combined_df <- merge(combined_df, pl_df, by = "Date", all = TRUE)
+combined_df <- merge(combined_df, oy_df, by = "Date", all = TRUE)
+combined_df <- merge(combined_df, PG_df, by = "Date", all = TRUE)
+
+#Renamed and removed some columns from this file, bewlow is the reloaded version
+
+climatedat <- read_excel("C:/Users/Caleb/OneDrive/Desktop/temp/combinedclimate_fix.xlsx")
+
+climatedat$istodayhot<-0
+climatedat$istodayhot[climatedat$kamloopsmax>35]<-1 #replaces the 0s if it is indeed hot
+climatedat$wasyesterdayhot<-0
+for (i in 2:nrow(climatedat)) {
+  # Check if the previousday is hot, if it is, it puts 1 into this entry
+  if (climatedat$istodayhot[i - 1] == 1) {
+    # If the condition is met, replace the value in wasyesterdayhot with 0
+    climatedat$wasyesterdayhot[i] <- 1
+  }
+}
+
+
+climatedat$state <- ifelse(climatedat$istodayhot == 0 & climatedat$wasyesterdayhot == 0, '00',
+                           ifelse(climatedat$istodayhot == 0 & climatedat$wasyesterdayhot == 1, '10',
+                                  ifelse(climatedat$istodayhot == 1 & climatedat$wasyesterdayhot == 0, '01', '11')))
+
+climatedat$state <- paste0(climatedat$istodayhot, climatedat$wasyesterdayhot)
+climatedat$next_state <- c(climatedat$istodayhot[-1], NA) #puts the next state into current row
+#removes the two extra columns
+
+climatedat <- climatedat[, !(names(climatedat) %in% c("istodayhot"))]
+climatedat <- climatedat[, !(names(climatedat) %in% c("Date"))]
+climatedat <- climatedat[-1, ]  # removes the first row so the NA doesnt cause issues
+
+columns_to_remove <- c("kmaxprev", "kminprev", "kprevpress")
+climatedat <- climatedat[, !names(climatedat) %in% columns_to_remove]
+View(climatedat)
+```
+We now have a working data set.  
+```{r predict1, warning = FALSE}
+state_dfs <- split(climatedat, climatedat$state)
+
+# separates based off the states, I checked to make sure they were split correctly
+state1_df <- state_dfs[["00"]]
+state2_df <- state_dfs[["01"]]
+state3_df <- state_dfs[["10"]]
+state4_df <- state_dfs[["11"]]
+
+state1_df <- state1_df[, !names(state1_df) %in% "state"]
+#Since the latter 3 samples are small, we will perform 10 fold Cross validation to get the best model.  
+
+# Replace NA with 0 for specific columns, the NA was in December 
+state1_df$next_state[is.na(state1_df$next_state)] <- 0 
+
+set.seed(1234)
+
+#preliminary testing
+model1 <- train(
+  next_state ~ ., 
+  data = state1_df, 
+  method = "glm",
+  family = binomial,
+  trControl = trainControl("cv", number = 10),
+  tuneLength = 10
+)
+
+summary(model1)
+# interestingly enough. the best predictors are portlandmin, portland pressure, osoyoos max, pg max, and kamloops max.  WE will develop our actual model off these.  This is interesting because it agrees with the idea that kamloops weather systems come from the south and west
+
+X <- state1_df[, c("next_state","portmin", "portpress", "oymax", "kamloopsmax")]
+
+model <- train(
+  next_state~., 
+  data = X, 
+  method = "glm",
+  family = binomial,
+  trControl = trainControl("cv", number = 10),
+  tuneLength = 10
+)
+summary(model)
+
+
+```
+
+```{r predict2, warning = FALSE}
+state_dfs <- split(climatedat, climatedat$state)
+
+# separates based off the states, I checked to make sure they were split correctly
+state2_df <- state_dfs[["01"]]
+
+
+state2_df <- state2_df[, !names(state2_df) %in% "state"]
+#Since the latter 3 samples are small, we will perform 10 fold Cross validation to get the best model.  
+
+# Replace NA with 0 for specific columns, the NA was in December 
+state2_df$next_state[is.na(state2_df$next_state)] <- 0 
+
+set.seed(1234)
+
+#preliminary testing
+model1 <- train(
+  next_state ~ ., 
+  data = state2_df, 
+  method = "glm",
+  family = binomial,
+  trControl = trainControl("cv", number = 10),
+  tuneLength = 10
+)
+
+summary(model1)
+# interestingly enough. the best predictors are portlandmin, portland pressure, osoyoos max, pg max, and kamloops max.  WE will develop our actual model off these.  This is interesting because it agrees with the idea that kamloops weather systems come from the south and west
+
+X <- state2_df[, c("next_state","portmin", "portpress", "oymax", "kamloopsmax")]
+
+model <- train(
+  next_state~., 
+  data = X, 
+  method = "glm",
+  family = binomial,
+  trControl = trainControl("cv", number = 10),
+  tuneLength = 10
+)
+summary(model)
+
+
+```
+
+
+```{r part3}
+state_dfs <- split(climatedat, climatedat$state)
+
+# separates based off the states, I checked to make sure they were split correctly
+state3_df <- state_dfs[["10"]]
+
+state3_df <- state3_df[, !names(state3_df) %in% "state"]
+#Since the latter 3 samples are small, we will perform 10 fold Cross validation to get the best model.  
+
+# Replace NA with 0 for specific columns, the NA was in December 
+state3_df$next_state[is.na(state3_df$next_state)] <- 0 
+
+set.seed(1234)
+
+#preliminary testing
+model1 <- train(
+  next_state ~ ., 
+  data = state3_df, 
+  method = "glm",
+  family = binomial,
+  trControl = trainControl("cv", number = 10),
+  tuneLength = 10
+)
+
+summary(model1)
+# interestingly enough. the best predictors are portlandmin, portland pressure, osoyoos max, pg max, and kamloops max.  WE will develop our actual model off these.  This is interesting because it agrees with the idea that kamloops weather systems come from the south and west
+
+X <- state3_df[, c("next_state","portmin", "portpress", "oymax", "kamloopsmax")]
+
+model <- train(
+  next_state~., 
+  data = X, 
+  method = "glm",
+  family = binomial,
+  trControl = trainControl("cv", number = 10),
+  tuneLength = 10
+)
+summary(model)
+
+```
+
+```{r part4, warning=FALSE}
+state_dfs <- split(climatedat, climatedat$state)
+
+# separates based off the states, I checked to make sure they were split correctly
+state4_df <- state_dfs[["11"]]
+
+state4_df <- state4_df[, !names(state4_df) %in% "state"]
+#Since the latter 3 samples are small, we will perform 10 fold Cross validation to get the best model.  
+
+# Replace NA with 0 for specific columns, the NA was in December 
+state4_df$next_state[is.na(state4_df$next_state)] <- 0 
+
+set.seed(1234)
+
+#preliminary testing
+model1 <- train(
+  next_state ~ ., 
+  data = state4_df, 
+  method = "glm",
+  family = binomial,
+  trControl = trainControl("cv", number = 10),
+  tuneLength = 10
+)
+
+summary(model1)
+# interestingly enough. the best predictors are portlandmin, portland pressure, osoyoos max, pg max, and kamloops max.  WE will develop our actual model off these.  This is interesting because it agrees with the idea that kamloops weather systems come from the south and west
+
+X <- state4_df[, c("next_state","portmin", "portpress", "oymax", "kamloopsmax")]
+
+model <- train(
+  next_state~., 
+  data = X, 
+  method = "glm",
+  family = binomial,
+  trControl = trainControl("cv", number = 10),
+  tuneLength = 10
+)
+summary(model)
+```
